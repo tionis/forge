@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -94,6 +95,11 @@ var availableAlgos = map[string]AlgoFactory{
 
 func main() {
 	// Parse CLI args
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options] [root_dir]\n\nOptions:\n", os.Args[0])
+		flag.PrintDefaults()
+		fmt.Fprintf(flag.CommandLine.Output(), "\nSupported Hash Algorithms:\n  %s\n", strings.Join(getSortedAlgoNames(), ", "))
+	}
 	workers := flag.Int("w", runtime.NumCPU(), "Number of parallel workers")
 	verbose := flag.Bool("v", false, "Verbose output")
 	algosFlag := flag.String("algos", "sha256", "Comma-separated list of hash algorithms to use")
@@ -207,6 +213,7 @@ func getSortedAlgoNames() []string {
 	for name := range availableAlgos {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return names
 }
 

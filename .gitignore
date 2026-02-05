@@ -1,0 +1,13 @@
+# Binaries
+hashtag
+main
+
+# Test binaries
+*.test
+
+# Output of 'go install'
+bin/
+
+# IDEs
+.vscode/
+.idea/
