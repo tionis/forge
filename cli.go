@@ -35,7 +35,7 @@ func executeCLI(args []string) error {
 
 func shouldUseHashCompatibilityMode(args []string) bool {
 	if len(args) == 0 {
-		return true
+		return false
 	}
 
 	switch args[0] {

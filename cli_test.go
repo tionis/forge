@@ -8,7 +8,7 @@ func TestShouldUseHashCompatibilityMode(t *testing.T) {
 		args []string
 		want bool
 	}{
-		{name: "no args", args: nil, want: true},
+		{name: "no args", args: nil, want: false},
 		{name: "hash command", args: []string{"hash"}, want: false},
 		{name: "snapshot command", args: []string{"snapshot"}, want: false},
 		{name: "help command", args: []string{"help"}, want: false},

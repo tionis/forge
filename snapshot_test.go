@@ -268,6 +268,103 @@ func TestSnapshotSubcommandsHistoryAndDiff(t *testing.T) {
 	}
 }
 
+func TestSnapshotSchemaForeignKeysEnabled(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "snapshot.db")
+	db, err := openSnapshotDB(dbPath)
+	if err != nil {
+		t.Fatalf("open snapshot db: %v", err)
+	}
+	defer db.Close()
+
+	var enabled int
+	if err := db.QueryRow("PRAGMA foreign_keys;").Scan(&enabled); err != nil {
+		t.Fatalf("query pragma foreign_keys: %v", err)
+	}
+	if enabled != 1 {
+		t.Fatalf("expected PRAGMA foreign_keys=1, got %d", enabled)
+	}
+
+	if _, err := db.Exec(`INSERT INTO tree_entry_tags(tree_hash, name, tag_id) VALUES('missing', 'entry', 999)`); err == nil {
+		t.Fatal("expected foreign key error for invalid tree_entry_tags insert")
+	}
+}
+
+func TestInsertTreePersistsTagRelations(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "snapshot.db")
+	db, err := openSnapshotDB(dbPath)
+	if err != nil {
+		t.Fatalf("open snapshot db: %v", err)
+	}
+	defer db.Close()
+
+	entry := treeEntry{
+		Name:        "file.txt",
+		Kind:        snapshotKindFile,
+		TargetHash:  strings.Repeat("a", 64),
+		Mode:        0o100644,
+		ModTimeUnix: 123456789,
+		Size:        7,
+		Tags:        []string{"media", "music"},
+		TagsHash:    hashNormalizedTags([]string{"media", "music"}),
+	}
+	treeHash := hashTree([]treeEntry{entry})
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	if err := insertTree(tx, treeHash, []treeEntry{entry}); err != nil {
+		tx.Rollback()
+		t.Fatalf("insert tree: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit tx: %v", err)
+	}
+
+	if got := mustCount(t, db, "SELECT COUNT(*) FROM tags"); got != 2 {
+		t.Fatalf("expected 2 tags, got %d", got)
+	}
+	if got := mustCount(t, db, "SELECT COUNT(*) FROM tree_entry_tags"); got != 2 {
+		t.Fatalf("expected 2 tree_entry_tags rows, got %d", got)
+	}
+
+	var storedTagsHash string
+	if err := db.QueryRow("SELECT tags_hash FROM tree_entries WHERE tree_hash = ? AND name = ?", treeHash, "file.txt").Scan(&storedTagsHash); err != nil {
+		t.Fatalf("query stored tags_hash: %v", err)
+	}
+	if storedTagsHash != entry.TagsHash {
+		t.Fatalf("expected tags_hash=%s, got %s", entry.TagsHash, storedTagsHash)
+	}
+}
+
+func TestHashMappingsTableStoresMinimalMapping(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "snapshot.db")
+	db, err := openSnapshotDB(dbPath)
+	if err != nil {
+		t.Fatalf("open snapshot db: %v", err)
+	}
+	defer db.Close()
+
+	blake3Digest := strings.Repeat("b", 64)
+	sha256Digest := strings.Repeat("c", 64)
+	if _, err := db.Exec(
+		`INSERT INTO hash_mappings(blake3, algo, digest) VALUES(?, ?, ?)`,
+		blake3Digest,
+		"sha256",
+		sha256Digest,
+	); err != nil {
+		t.Fatalf("insert hash mapping: %v", err)
+	}
+
+	var got string
+	if err := db.QueryRow(`SELECT digest FROM hash_mappings WHERE blake3 = ? AND algo = ?`, blake3Digest, "sha256").Scan(&got); err != nil {
+		t.Fatalf("query hash mapping: %v", err)
+	}
+	if got != sha256Digest {
+		t.Fatalf("expected digest %s, got %s", sha256Digest, got)
+	}
+}
+
 func mustCount(t *testing.T, db *sql.DB, query string, args ...any) int {
 	t.Helper()
 	var count int

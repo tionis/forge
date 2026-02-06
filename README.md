@@ -89,9 +89,22 @@ Diff codes:
 - `M`: modified path (hash and/or metadata)
 - `T`: type changed (`file`/`tree`/`symlink`)
 
+Snapshot metadata:
+- `user.xdg.tags` is ingested as normalized tags and stored as first-class relational data.
+- Tree hashes are content-addressed using BLAKE3 over canonical tree serialization (`htag.tree.v2`).
+
+Snapshot database tables:
+- `trees`
+- `tree_entries`
+- `tags`
+- `tree_entry_tags`
+- `pointers`
+- `hash_mappings` (minimal `(blake3, algo) -> digest` mapping table)
+
 ## Documentation
 
 - Docs index: [`docs/README.md`](docs/README.md)
+- Snapshot architecture: [`docs/snapshot_architecture.md`](docs/snapshot_architecture.md)
 - Tool rules: [`docs/tool_rules.md`](docs/tool_rules.md)
 - Adding tools: [`docs/adding_tools.md`](docs/adding_tools.md)
 - Hash metadata spec: [`docs/file_hashing_via_xattrs.md`](docs/file_hashing_via_xattrs.md)

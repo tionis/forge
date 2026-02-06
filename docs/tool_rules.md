@@ -31,6 +31,7 @@ These rules define how Forge tools should behave so commands can be composed rel
 - Use deterministic serialization for hashed objects.
 - Include an explicit schema/version marker in hash input formats.
 - Record hash algorithm alongside stored hashes.
+- Document hash input contracts whenever schema-affecting fields are added.
 
 ## Database Practices
 
