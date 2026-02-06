@@ -55,7 +55,6 @@ type treeEntry struct {
 	Size        int64
 	LinkTarget  string
 	Tags        []string
-	TagsHash    string
 }
 
 type snapshotPointer struct {
@@ -662,7 +661,6 @@ func initSnapshotSchema(db *sql.DB) error {
 			mod_time_ns INTEGER NOT NULL,
 			size INTEGER NOT NULL,
 			link_target TEXT NOT NULL,
-			tags_hash TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (tree_hash, name),
 			FOREIGN KEY(tree_hash) REFERENCES trees(hash) ON DELETE CASCADE
 		);`,
@@ -705,51 +703,10 @@ func initSnapshotSchema(db *sql.DB) error {
 		}
 	}
 
-	if err := ensureTreeEntriesTagsHashColumn(db); err != nil {
-		return err
-	}
 	if err := verifyForeignKeysEnabled(db); err != nil {
 		return err
 	}
 
-	return nil
-}
-
-func ensureTreeEntriesTagsHashColumn(db *sql.DB) error {
-	rows, err := db.Query("PRAGMA table_info(tree_entries);")
-	if err != nil {
-		return fmt.Errorf("inspect tree_entries schema: %w", err)
-	}
-	defer rows.Close()
-
-	hasTagsHash := false
-	for rows.Next() {
-		var (
-			cid        int
-			name       string
-			columnType string
-			notNull    int
-			defaultVal sql.NullString
-			primaryKey int
-		)
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &primaryKey); err != nil {
-			return fmt.Errorf("scan tree_entries schema row: %w", err)
-		}
-		if name == "tags_hash" {
-			hasTagsHash = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate tree_entries schema rows: %w", err)
-	}
-
-	if hasTagsHash {
-		return nil
-	}
-
-	if _, err := db.Exec(`ALTER TABLE tree_entries ADD COLUMN tags_hash TEXT NOT NULL DEFAULT ''`); err != nil {
-		return fmt.Errorf("add tags_hash column to tree_entries: %w", err)
-	}
 	return nil
 }
 
@@ -1006,6 +963,9 @@ func describeTreeMetadataDelta(oldEntry, newEntry treeEntry) string {
 	if oldEntry.Size != newEntry.Size {
 		parts = append(parts, fmt.Sprintf("size %d -> %d", oldEntry.Size, newEntry.Size))
 	}
+	if tagsDelta := describeTagListDelta(oldEntry.Tags, newEntry.Tags); tagsDelta != "" {
+		parts = append(parts, tagsDelta)
+	}
 	return strings.Join(parts, ", ")
 }
 
@@ -1026,8 +986,58 @@ func describeEntryDelta(oldEntry, newEntry treeEntry) string {
 	if oldEntry.LinkTarget != newEntry.LinkTarget {
 		parts = append(parts, fmt.Sprintf("link_target %q -> %q", oldEntry.LinkTarget, newEntry.LinkTarget))
 	}
-	if oldEntry.TagsHash != newEntry.TagsHash {
-		parts = append(parts, fmt.Sprintf("tags_hash %s -> %s", oldEntry.TagsHash, newEntry.TagsHash))
+	if tagsDelta := describeTagListDelta(oldEntry.Tags, newEntry.Tags); tagsDelta != "" {
+		parts = append(parts, tagsDelta)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func describeTagListDelta(oldTags, newTags []string) string {
+	if len(oldTags) == len(newTags) {
+		equal := true
+		for i := range oldTags {
+			if oldTags[i] != newTags[i] {
+				equal = false
+				break
+			}
+		}
+		if equal {
+			return ""
+		}
+	}
+
+	oldSet := make(map[string]struct{}, len(oldTags))
+	for _, tag := range oldTags {
+		oldSet[tag] = struct{}{}
+	}
+	newSet := make(map[string]struct{}, len(newTags))
+	for _, tag := range newTags {
+		newSet[tag] = struct{}{}
+	}
+
+	removed := make([]string, 0)
+	for _, tag := range oldTags {
+		if _, exists := newSet[tag]; !exists {
+			removed = append(removed, tag)
+		}
+	}
+
+	added := make([]string, 0)
+	for _, tag := range newTags {
+		if _, exists := oldSet[tag]; !exists {
+			added = append(added, tag)
+		}
+	}
+
+	parts := make([]string, 0, 2)
+	if len(added) > 0 {
+		parts = append(parts, "tags +"+strings.Join(added, ","))
+	}
+	if len(removed) > 0 {
+		parts = append(parts, "tags -"+strings.Join(removed, ","))
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("tags %s -> %s", formatTags(oldTags), formatTags(newTags))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -1038,7 +1048,7 @@ func loadTreeEntries(db *sql.DB, cache map[string][]treeEntry, treeHash string) 
 	}
 
 	rows, err := db.Query(
-		`SELECT name, kind, target_hash, mode, mod_time_ns, size, link_target, tags_hash
+		`SELECT name, kind, target_hash, mode, mod_time_ns, size, link_target
 		 FROM tree_entries
 		 WHERE tree_hash = ?
 		 ORDER BY name ASC`,
@@ -1061,7 +1071,6 @@ func loadTreeEntries(db *sql.DB, cache map[string][]treeEntry, treeHash string) 
 			&entry.ModTimeUnix,
 			&entry.Size,
 			&entry.LinkTarget,
-			&entry.TagsHash,
 		); err != nil {
 			return nil, fmt.Errorf("scan tree entry in tree %q: %w", treeHash, err)
 		}
@@ -1071,6 +1080,36 @@ func loadTreeEntries(db *sql.DB, cache map[string][]treeEntry, treeHash string) 
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate tree entries for %q: %w", treeHash, err)
+	}
+
+	tagRows, err := db.Query(
+		`SELECT et.name, t.name
+		 FROM tree_entry_tags et
+		 JOIN tags t ON t.id = et.tag_id
+		 WHERE et.tree_hash = ?
+		 ORDER BY et.name ASC, t.name ASC`,
+		treeHash,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query tree entry tags for tree %q: %w", treeHash, err)
+	}
+	defer tagRows.Close()
+
+	tagMap := make(map[string][]string)
+	for tagRows.Next() {
+		var entryName string
+		var tagName string
+		if err := tagRows.Scan(&entryName, &tagName); err != nil {
+			return nil, fmt.Errorf("scan tree entry tag row in tree %q: %w", treeHash, err)
+		}
+		tagMap[entryName] = append(tagMap[entryName], tagName)
+	}
+	if err := tagRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tree entry tags for tree %q: %w", treeHash, err)
+	}
+
+	for i := range entries {
+		entries[i].Tags = tagMap[entries[i].Name]
 	}
 
 	cache[treeHash] = entries
@@ -1108,7 +1147,6 @@ func ingestDirectory(tx *sql.Tx, dirPath string, stats *snapshotStats, opts snap
 			return "", err
 		}
 		entry.Tags = tags
-		entry.TagsHash = hashNormalizedTags(tags)
 
 		switch {
 		case info.IsDir():
@@ -1210,20 +1248,6 @@ func canIgnoreXattrReadError(err error) bool {
 		err == syscall.EOPNOTSUPP
 }
 
-func hashNormalizedTags(tags []string) string {
-	if len(tags) == 0 {
-		return ""
-	}
-
-	h := blake3.New()
-	writeHashString(h, "forge.tags.v1")
-	writeHashUint32(h, uint32(len(tags)))
-	for _, tag := range tags {
-		writeHashString(h, tag)
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
 func writeHashString(h hash.Hash, value string) {
 	writeHashBytes(h, []byte(value))
 }
@@ -1267,8 +1291,8 @@ func insertTree(tx *sql.Tx, treeHash string, entries []treeEntry) error {
 	}
 
 	stmt, err := tx.Prepare(
-		`INSERT INTO tree_entries(tree_hash, name, kind, target_hash, mode, mod_time_ns, size, link_target, tags_hash)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO tree_entries(tree_hash, name, kind, target_hash, mode, mod_time_ns, size, link_target)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		return fmt.Errorf("prepare tree entry insert: %w", err)
@@ -1295,7 +1319,6 @@ func insertTree(tx *sql.Tx, treeHash string, entries []treeEntry) error {
 			entry.ModTimeUnix,
 			entry.Size,
 			entry.LinkTarget,
-			entry.TagsHash,
 		); err != nil {
 			return fmt.Errorf("insert tree entry %q in tree %q: %w", entry.Name, treeHash, err)
 		}

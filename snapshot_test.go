@@ -242,6 +242,88 @@ func TestSnapshotDiffDetectsAddRemoveAndModify(t *testing.T) {
 	}
 }
 
+func TestSnapshotDiffReportsTagListDelta(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "snapshot.db")
+	db, err := openSnapshotDB(dbPath)
+	if err != nil {
+		t.Fatalf("open snapshot db: %v", err)
+	}
+	defer db.Close()
+
+	oldEntries := []treeEntry{
+		{
+			Name:        "song.mp3",
+			Kind:        snapshotKindFile,
+			TargetHash:  strings.Repeat("a", 64),
+			Mode:        0o100644,
+			ModTimeUnix: 1,
+			Size:        123,
+			Tags:        []string{"music", "work"},
+		},
+	}
+	newEntries := []treeEntry{
+		{
+			Name:        "song.mp3",
+			Kind:        snapshotKindFile,
+			TargetHash:  strings.Repeat("a", 64),
+			Mode:        0o100644,
+			ModTimeUnix: 1,
+			Size:        123,
+			Tags:        []string{"archive", "music"},
+		},
+	}
+
+	oldTreeHash := hashTree(oldEntries)
+	newTreeHash := hashTree(newEntries)
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	if err := insertTree(tx, oldTreeHash, oldEntries); err != nil {
+		tx.Rollback()
+		t.Fatalf("insert old tree: %v", err)
+	}
+	if err := insertTree(tx, newTreeHash, newEntries); err != nil {
+		tx.Rollback()
+		t.Fatalf("insert new tree: %v", err)
+	}
+
+	const targetPath = "/tmp/snapshot-tag-diff"
+	if err := insertPointer(tx, targetPath, 100, snapshotKindTree, oldTreeHash); err != nil {
+		tx.Rollback()
+		t.Fatalf("insert old pointer: %v", err)
+	}
+	if err := insertPointer(tx, targetPath, 200, snapshotKindTree, newTreeHash); err != nil {
+		tx.Rollback()
+		t.Fatalf("insert new pointer: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit tx: %v", err)
+	}
+
+	fromPointer, toPointer, err := resolvePointersForDiff(db, targetPath, 0, 0)
+	if err != nil {
+		t.Fatalf("resolve pointers for diff: %v", err)
+	}
+	changes, err := diffPointers(db, fromPointer, toPointer)
+	if err != nil {
+		t.Fatalf("diff pointers: %v", err)
+	}
+
+	found := false
+	for _, change := range changes {
+		if change.Code == "M" && change.Path == "song.mp3" {
+			if strings.Contains(change.Detail, "tags +archive") && strings.Contains(change.Detail, "tags -work") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected tag list delta in diff details; changes=%v", changes)
+	}
+}
+
 func TestSnapshotSubcommandsHistoryAndDiff(t *testing.T) {
 	root := t.TempDir()
 	filePath := filepath.Join(root, "file.txt")
@@ -286,7 +368,6 @@ func TestSnapshotSubcommandsInspectAndQuery(t *testing.T) {
 			ModTimeUnix: 100,
 			Size:        3,
 			Tags:        []string{"music", "work"},
-			TagsHash:    hashNormalizedTags([]string{"music", "work"}),
 		},
 		{
 			Name:        "b.txt",
@@ -296,7 +377,6 @@ func TestSnapshotSubcommandsInspectAndQuery(t *testing.T) {
 			ModTimeUnix: 100,
 			Size:        5,
 			Tags:        []string{"music"},
-			TagsHash:    hashNormalizedTags([]string{"music"}),
 		},
 	}
 	treeHash := hashTree(entries)
@@ -343,7 +423,6 @@ func TestSnapshotInspectAndQueryJSONOutput(t *testing.T) {
 			ModTimeUnix: 100,
 			Size:        3,
 			Tags:        []string{"music", "work"},
-			TagsHash:    hashNormalizedTags([]string{"music", "work"}),
 		},
 		{
 			Name:        "b.txt",
@@ -353,7 +432,6 @@ func TestSnapshotInspectAndQueryJSONOutput(t *testing.T) {
 			ModTimeUnix: 100,
 			Size:        5,
 			Tags:        []string{"music"},
-			TagsHash:    hashNormalizedTags([]string{"music"}),
 		},
 	}
 	treeHash := hashTree(entries)
@@ -450,7 +528,6 @@ func TestInsertTreePersistsTagRelations(t *testing.T) {
 		ModTimeUnix: 123456789,
 		Size:        7,
 		Tags:        []string{"media", "music"},
-		TagsHash:    hashNormalizedTags([]string{"media", "music"}),
 	}
 	treeHash := hashTree([]treeEntry{entry})
 
@@ -471,14 +548,6 @@ func TestInsertTreePersistsTagRelations(t *testing.T) {
 	}
 	if got := mustCount(t, db, "SELECT COUNT(*) FROM tree_entry_tags"); got != 2 {
 		t.Fatalf("expected 2 tree_entry_tags rows, got %d", got)
-	}
-
-	var storedTagsHash string
-	if err := db.QueryRow("SELECT tags_hash FROM tree_entries WHERE tree_hash = ? AND name = ?", treeHash, "file.txt").Scan(&storedTagsHash); err != nil {
-		t.Fatalf("query stored tags_hash: %v", err)
-	}
-	if storedTagsHash != entry.TagsHash {
-		t.Fatalf("expected tags_hash=%s, got %s", entry.TagsHash, storedTagsHash)
 	}
 }
 

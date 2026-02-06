@@ -25,7 +25,6 @@ type snapshotInspectEntryOutput struct {
 	ModTimeNS  int64    `json:"mod_time_ns"`
 	Size       int64    `json:"size"`
 	Tags       []string `json:"tags"`
-	TagsHash   string   `json:"tags_hash"`
 }
 
 type snapshotInspectOutput struct {
@@ -60,13 +59,13 @@ func renderSnapshotInspectOutput(mode string, output snapshotInspectOutput) erro
 		fmt.Printf("recursive=%t\n", output.Recursive)
 		fmt.Printf("entry_count=%d\n", output.EntryCount)
 		if output.Recursive {
-			fmt.Println("path\tkind\ttarget_hash\tmode\tmod_time_ns\tsize\ttags\ttags_hash")
+			fmt.Println("path\tkind\ttarget_hash\tmode\tmod_time_ns\tsize\ttags")
 		} else {
-			fmt.Println("name\tkind\ttarget_hash\tmode\tmod_time_ns\tsize\ttags\ttags_hash")
+			fmt.Println("name\tkind\ttarget_hash\tmode\tmod_time_ns\tsize\ttags")
 		}
 		for _, entry := range output.Entries {
 			fmt.Printf(
-				"%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
+				"%s\t%s\t%s\t%s\t%d\t%d\t%s\n",
 				entry.Path,
 				entry.Kind,
 				entry.TargetHash,
@@ -74,7 +73,6 @@ func renderSnapshotInspectOutput(mode string, output snapshotInspectOutput) erro
 				entry.ModTimeNS,
 				entry.Size,
 				formatTags(entry.Tags),
-				entry.TagsHash,
 			)
 		}
 		return nil
@@ -100,14 +98,13 @@ func renderSnapshotInspectOutput(mode string, output snapshotInspectOutput) erro
 				strconv.FormatInt(entry.ModTimeNS, 10),
 				strconv.FormatInt(entry.Size, 10),
 				formatTags(entry.Tags),
-				entry.TagsHash,
 			})
 		}
 		if len(rows) == 0 {
 			fmt.Println("No entries found.")
 			return nil
 		}
-		printPrettyTable([]string{"Path", "Kind", "Target Hash", "Mode", "Mod Time (ns)", "Size", "Tags", "Tags Hash"}, rows)
+		printPrettyTable([]string{"Path", "Kind", "Target Hash", "Mode", "Mod Time (ns)", "Size", "Tags"}, rows)
 		return nil
 	default:
 		return fmt.Errorf("unsupported output mode %q", mode)
@@ -226,7 +223,6 @@ func runSnapshotInspectCommand(args []string) error {
 				ModTimeNS:  record.Entry.ModTimeUnix,
 				Size:       record.Entry.Size,
 				Tags:       append([]string(nil), record.Entry.Tags...),
-				TagsHash:   record.Entry.TagsHash,
 			})
 		}
 		return renderSnapshotInspectOutput(
@@ -256,7 +252,6 @@ func runSnapshotInspectCommand(args []string) error {
 			ModTimeNS:  entry.ModTimeUnix,
 			Size:       entry.Size,
 			Tags:       append([]string(nil), entry.Tags...),
-			TagsHash:   entry.TagsHash,
 		})
 	}
 
@@ -425,45 +420,7 @@ func collectTreeEntriesRecursiveInto(db *sql.DB, treeHash, parentPath string, st
 }
 
 func loadTreeEntriesWithTags(db *sql.DB, treeHash string) ([]treeEntry, error) {
-	entries, err := loadTreeEntries(db, make(map[string][]treeEntry), treeHash)
-	if err != nil {
-		return nil, err
-	}
-
-	tagRows, err := db.Query(
-		`SELECT et.name, t.name
-		 FROM tree_entry_tags et
-		 JOIN tags t ON t.id = et.tag_id
-		 WHERE et.tree_hash = ?
-		 ORDER BY et.name ASC, t.name ASC`,
-		treeHash,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query tree entry tags for tree %q: %w", treeHash, err)
-	}
-	defer tagRows.Close()
-
-	tagMap := make(map[string][]string)
-	for tagRows.Next() {
-		var entryName string
-		var tagName string
-		if err := tagRows.Scan(&entryName, &tagName); err != nil {
-			return nil, fmt.Errorf("scan tree entry tag row in tree %q: %w", treeHash, err)
-		}
-		tagMap[entryName] = append(tagMap[entryName], tagName)
-	}
-	if err := tagRows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate tree entry tags for tree %q: %w", treeHash, err)
-	}
-
-	for i := range entries {
-		entries[i].Tags = tagMap[entries[i].Name]
-		if entries[i].TagsHash == "" && len(entries[i].Tags) > 0 {
-			entries[i].TagsHash = hashNormalizedTags(entries[i].Tags)
-		}
-	}
-
-	return entries, nil
+	return loadTreeEntries(db, make(map[string][]treeEntry), treeHash)
 }
 
 func normalizeTags(raw string) []string {

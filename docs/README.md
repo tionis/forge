@@ -10,6 +10,7 @@ This folder contains architecture notes and tool contracts for Forge.
 - `dupes_tool.md`: `forge dupes` duplicate-detection behavior and output.
 - `snapshot_architecture.md`: snapshot schema, canonical hashing, tag normalization, and safety constraints.
 - `hashmap_tool.md`: `forge hashmap` command model and mapping-table semantics.
+- `tags_tool.md`: `forge tags` xattr tag-management behavior and output.
 - `file_hashing_via_xattrs.md`: hash cache metadata spec used by `forge hash`.
 
 ## Design Goals

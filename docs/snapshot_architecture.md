@@ -20,7 +20,6 @@ CLI subcommands:
 
 - File content identity: `blake3(content)` (hex).
 - Tree identity: `blake3(canonical_tree_serialization)` (hex).
-- Tag set identity per tree entry: `blake3(canonical_tag_serialization)` (hex).
 
 ## Tree Hashing (Canonical)
 
@@ -58,15 +57,13 @@ Snapshot ingests `user.xdg.tags` and normalizes as follows:
 
 The normalized set is:
 - embedded into tree hash input
-- hashed with `forge.tags.v1` domain marker
-- stored in `tree_entries.tags_hash`
 - stored relationally in `tags` + `tree_entry_tags`
 
 ## SQLite Schema
 
 Core tables:
 - `trees(hash PK, hash_algo, created_at_ns, entry_count)`
-- `tree_entries(tree_hash, name, kind, target_hash, mode, mod_time_ns, size, link_target, tags_hash)`
+- `tree_entries(tree_hash, name, kind, target_hash, mode, mod_time_ns, size, link_target)`
   - PK: `(tree_hash, name)`
   - FK: `tree_hash -> trees(hash)` with `ON DELETE CASCADE`
 - `tags(id PK, name UNIQUE)`

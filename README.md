@@ -7,6 +7,7 @@ Current tools:
 - `forge dupes`: duplicate-file detection by content hash.
 - `forge snapshot`: metadata-only filesystem snapshots with history, diff, inspect, and tag query.
 - `forge hashmap`: map external digests back to BLAKE3 identities.
+- `forge tags`: manage `user.xdg.tags` metadata on files/paths.
 
 ## Install
 
@@ -25,6 +26,7 @@ Top-level commands:
 - `forge dupes`
 - `forge snapshot`
 - `forge hashmap`
+- `forge tags`
 - `forge completion`
 
 Output mode convention:
@@ -175,12 +177,34 @@ Hashmap flags:
 - `-digest`: digest value (lookup)
 - `-blake3`: BLAKE3 digest value (show)
 
+## Tags Tool
+
+Manage `user.xdg.tags` directly:
+
+```bash
+forge tags get [flags] [path]
+forge tags set -tags tag1,tag2 [flags] [path]
+forge tags add -tags tag3 [flags] [path]
+forge tags remove -tags tag2 [flags] [path]
+forge tags clear [flags] [path]
+```
+
+Tags flags:
+- `-output`: output mode `auto|pretty|kv|json` (default `auto`)
+- `-tags`: comma/semicolon-separated tag list (required for `set`/`add`/`remove`)
+
+Notes:
+- Tags are normalized before storage (trimmed, deduplicated, sorted).
+- Empty tags are cleared by `forge tags clear`.
+- Path defaults to current directory if omitted.
+
 ## Documentation
 
 - Docs index: [`docs/README.md`](docs/README.md)
 - Dupes tool: [`docs/dupes_tool.md`](docs/dupes_tool.md)
 - Snapshot architecture: [`docs/snapshot_architecture.md`](docs/snapshot_architecture.md)
 - Hashmap tool: [`docs/hashmap_tool.md`](docs/hashmap_tool.md)
+- Tags tool: [`docs/tags_tool.md`](docs/tags_tool.md)
 - Tool rules: [`docs/tool_rules.md`](docs/tool_rules.md)
 - Output modes: [`docs/output_modes.md`](docs/output_modes.md)
 - Adding tools: [`docs/adding_tools.md`](docs/adding_tools.md)

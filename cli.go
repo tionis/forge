@@ -38,6 +38,7 @@ func newRootCommand() *cobra.Command {
 	root.AddCommand(newDupesCommand())
 	root.AddCommand(newSnapshotCommand())
 	root.AddCommand(newHashmapCommand())
+	root.AddCommand(newTagsCommand())
 	root.AddCommand(newCompletionCommand(root))
 	return root
 }
@@ -177,4 +178,58 @@ func newCompletionCommand(root *cobra.Command) *cobra.Command {
 			}
 		},
 	}
+}
+
+func newTagsCommand() *cobra.Command {
+	tagsCmd := &cobra.Command{
+		Use:                "tags",
+		Short:              "Manage user.xdg.tags on files.",
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+
+	tagsCmd.AddCommand(&cobra.Command{
+		Use:                "get [options] [path]",
+		Short:              "Show normalized tags for a path.",
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTagsGetCommand(args)
+		},
+	})
+	tagsCmd.AddCommand(&cobra.Command{
+		Use:                "set [options] [path]",
+		Short:              "Replace tags on a path with the provided set.",
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTagsSetCommand(args)
+		},
+	})
+	tagsCmd.AddCommand(&cobra.Command{
+		Use:                "add [options] [path]",
+		Short:              "Add tags to a path.",
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTagsAddCommand(args)
+		},
+	})
+	tagsCmd.AddCommand(&cobra.Command{
+		Use:                "remove [options] [path]",
+		Short:              "Remove tags from a path.",
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTagsRemoveCommand(args)
+		},
+	})
+	tagsCmd.AddCommand(&cobra.Command{
+		Use:                "clear [options] [path]",
+		Short:              "Clear all tags on a path.",
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runTagsClearCommand(args)
+		},
+	})
+
+	return tagsCmd
 }

@@ -11,6 +11,7 @@ Forge uses `cobra` for command scaffolding.
   - snapshot: `snapshot.go`
   - snapshot query/inspect helpers: `snapshot_query.go`
   - hash mappings: `hashmap.go`
+  - tag management: `tags.go`
 
 ## Steps
 
