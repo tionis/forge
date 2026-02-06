@@ -93,6 +93,56 @@ var availableAlgos = map[string]AlgoFactory{
 	"xxhash": func() hash.Hash { return xxhash.New() },
 }
 
+type hashRunOutput struct {
+	Operation  string   `json:"operation"`
+	Root       string   `json:"root"`
+	Workers    int      `json:"workers"`
+	Algorithms []string `json:"algorithms,omitempty"`
+	DurationMS int64    `json:"duration_ms"`
+	Checked    uint64   `json:"checked"`
+	Updated    uint64   `json:"updated"`
+	Skipped    uint64   `json:"skipped"`
+	Errors     uint64   `json:"errors"`
+}
+
+func renderHashRunOutput(mode string, output hashRunOutput) error {
+	switch mode {
+	case outputModeKV:
+		fmt.Printf("operation=%s\n", output.Operation)
+		fmt.Printf("root=%s\n", output.Root)
+		fmt.Printf("workers=%d\n", output.Workers)
+		fmt.Printf("algorithms=%s\n", strings.Join(output.Algorithms, ","))
+		fmt.Printf("duration_ms=%d\n", output.DurationMS)
+		fmt.Printf("checked=%d\n", output.Checked)
+		fmt.Printf("updated=%d\n", output.Updated)
+		fmt.Printf("skipped=%d\n", output.Skipped)
+		fmt.Printf("errors=%d\n", output.Errors)
+		return nil
+	case outputModeJSON:
+		return printJSON(output)
+	case outputModePretty:
+		title := "Hash Run Summary"
+		if output.Operation == "remove" {
+			title = "Hash Removal Summary"
+		}
+		printPrettyTitle(title)
+		printPrettyFields([]outputField{
+			{Label: "Operation", Value: output.Operation},
+			{Label: "Root", Value: output.Root},
+			{Label: "Workers", Value: strconv.Itoa(output.Workers)},
+			{Label: "Algorithms", Value: strings.Join(output.Algorithms, ",")},
+			{Label: "Duration (ms)", Value: strconv.FormatInt(output.DurationMS, 10)},
+			{Label: "Checked", Value: strconv.FormatUint(output.Checked, 10)},
+			{Label: "Updated", Value: strconv.FormatUint(output.Updated, 10)},
+			{Label: "Skipped", Value: strconv.FormatUint(output.Skipped, 10)},
+			{Label: "Errors", Value: strconv.FormatUint(output.Errors, 10)},
+		})
+		return nil
+	default:
+		return fmt.Errorf("unsupported output mode %q", mode)
+	}
+}
+
 func runHashCommand(args []string) error {
 	atomic.StoreUint64(&filesChecked, 0)
 	atomic.StoreUint64(&filesHashed, 0)
@@ -112,11 +162,16 @@ func runHashCommand(args []string) error {
 	algosFlag := fs.String("algos", "blake3", "Comma-separated list of hash algorithms to use")
 	clean := fs.Bool("clean", false, "Force invalidation of existing caches (re-hash everything)")
 	remove := fs.Bool("remove", false, "Remove all checksum attributes from files instead of hashing")
+	outputMode := fs.String("output", outputModeAuto, "Output mode: auto|pretty|kv|json")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
 		return fmt.Errorf("parse hash flags: %w", err)
+	}
+	resolvedOutputMode, err := resolvePrettyKVJSONOutputMode(*outputMode)
+	if err != nil {
+		return err
 	}
 
 	var factories = make(map[string]AlgoFactory)
@@ -152,13 +207,19 @@ func runHashCommand(args []string) error {
 	if root == "" {
 		root = "."
 	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve root path: %w", err)
+	}
 
 	start := time.Now()
-	if *remove {
-		log.Printf("Starting attribute removal on: %s (Workers: %d)", root, *workers)
-	} else {
-		log.Printf("Starting forge hash on: %s (Workers: %d)", root, *workers)
-		log.Printf("Algorithms: %s", *algosFlag)
+	if *verbose {
+		if *remove {
+			log.Printf("Starting attribute removal on: %s (Workers: %d)", absRoot, *workers)
+		} else {
+			log.Printf("Starting forge hash on: %s (Workers: %d)", absRoot, *workers)
+			log.Printf("Algorithms: %s", *algosFlag)
+		}
 	}
 
 	// Worker Pool Channels
@@ -177,7 +238,7 @@ func runHashCommand(args []string) error {
 	}
 
 	// Walk filesystem
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(absRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			log.Printf("Error accessing path %q: %v", path, err)
 			return nil
@@ -203,23 +264,54 @@ func runHashCommand(args []string) error {
 	}
 
 	duration := time.Since(start)
-	log.Printf("\nDone in %s.", duration)
+	if *verbose {
+		log.Printf("\nDone in %s.", duration)
+	}
+	updated := atomic.LoadUint64(&filesHashed)
+	skipped := atomic.LoadUint64(&filesSkipped)
+	operation := "hash"
 	if *remove {
-		log.Printf("Checked: %d | Removed: %d | Errors: %d",
-			atomic.LoadUint64(&filesChecked),
-			atomic.LoadUint64(&filesSkipped),
-			atomic.LoadUint64(&errors),
-		)
-	} else {
-		log.Printf("Checked: %d | Hashed (New/Updated): %d | Skipped (Cache Hit): %d | Errors: %d",
-			atomic.LoadUint64(&filesChecked),
-			atomic.LoadUint64(&filesHashed),
-			atomic.LoadUint64(&filesSkipped),
-			atomic.LoadUint64(&errors),
-		)
+		operation = "remove"
+		updated = atomic.LoadUint64(&filesSkipped)
+		skipped = 0
+	}
+	if *verbose {
+		if *remove {
+			log.Printf("Checked: %d | Removed: %d | Errors: %d",
+				atomic.LoadUint64(&filesChecked),
+				updated,
+				atomic.LoadUint64(&errors),
+			)
+		} else {
+			log.Printf("Checked: %d | Hashed (New/Updated): %d | Skipped (Cache Hit): %d | Errors: %d",
+				atomic.LoadUint64(&filesChecked),
+				updated,
+				skipped,
+				atomic.LoadUint64(&errors),
+			)
+		}
 	}
 
-	return nil
+	algorithms := make([]string, 0, len(factories))
+	for name := range factories {
+		algorithms = append(algorithms, name)
+	}
+	sort.Strings(algorithms)
+
+	return renderHashRunOutput(
+		resolvedOutputMode,
+		hashRunOutput{
+			Operation:  operation,
+			Root:       absRoot,
+			Workers:    *workers,
+			Algorithms: algorithms,
+			DurationMS: duration.Milliseconds(),
+			Checked:    atomic.LoadUint64(&filesChecked),
+			Updated:    updated,
+			Skipped:    skipped,
+			Errors:     atomic.LoadUint64(&errors),
+		},
+	)
 }
 
 func getSortedAlgoNames() []string {

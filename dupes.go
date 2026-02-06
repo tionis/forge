@@ -19,6 +19,8 @@ import (
 const dupesHashAlgo = "blake3"
 
 const (
+	dupesOutputAuto   = "auto"
+	dupesOutputPretty = "pretty"
 	dupesOutputTable  = "table"
 	dupesOutputJSON   = "json"
 	dupesOutputPaths  = "paths"
@@ -95,7 +97,7 @@ func runDupesCommand(args []string) error {
 	minSize := fs.Int64("min-size", 1, "Only consider files with size >= min-size bytes")
 	useCache := fs.Bool("cache", true, "Use checksum xattr cache when available")
 	updateCache := fs.Bool("update-cache", false, "Update checksum xattrs for newly hashed files")
-	outputMode := fs.String("output", dupesOutputTable, "Output mode: table|json|paths|paths0")
+	outputMode := fs.String("output", dupesOutputAuto, "Output mode: auto|pretty|table|json|paths|paths0")
 	verbose := fs.Bool("v", false, "Verbose output")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -106,7 +108,8 @@ func runDupesCommand(args []string) error {
 	if *minSize < 0 {
 		return fmt.Errorf("min-size must be >= 0")
 	}
-	if err := validateDupesOutputMode(*outputMode); err != nil {
+	resolvedOutputMode, err := resolveDupesOutputMode(*outputMode)
+	if err != nil {
 		return err
 	}
 
@@ -132,7 +135,9 @@ func runDupesCommand(args []string) error {
 	}
 
 	summary := summarizeDupes(groups, stats)
-	switch *outputMode {
+	switch resolvedOutputMode {
+	case dupesOutputPretty:
+		return renderDupesPretty(absRoot, summary, groups)
 	case dupesOutputTable:
 		return renderDupesTable(absRoot, summary, groups)
 	case dupesOutputJSON:
@@ -146,12 +151,18 @@ func runDupesCommand(args []string) error {
 	}
 }
 
-func validateDupesOutputMode(mode string) error {
-	switch mode {
-	case dupesOutputTable, dupesOutputJSON, dupesOutputPaths, dupesOutputPaths0:
-		return nil
+func resolveDupesOutputMode(mode string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(mode))
+	switch normalized {
+	case "", dupesOutputAuto:
+		if stdoutIsTerminal() {
+			return dupesOutputPretty, nil
+		}
+		return dupesOutputTable, nil
+	case dupesOutputPretty, dupesOutputTable, dupesOutputJSON, dupesOutputPaths, dupesOutputPaths0:
+		return normalized, nil
 	default:
-		return fmt.Errorf("unsupported output mode %q (expected table|json|paths|paths0)", mode)
+		return "", fmt.Errorf("unsupported output mode %q (expected auto|pretty|table|json|paths|paths0)", mode)
 	}
 }
 
@@ -189,6 +200,41 @@ func renderDupesTable(root string, summary dupesSummary, groups []dupesGroup) er
 			fmt.Printf("%d\t%s\t%d\t%s\n", groupID, group.hash, group.size, path)
 		}
 	}
+	return nil
+}
+
+func renderDupesPretty(root string, summary dupesSummary, groups []dupesGroup) error {
+	printPrettyTitle("Duplicate Files")
+	printPrettyFields([]outputField{
+		{Label: "Root", Value: root},
+		{Label: "Groups", Value: strconv.Itoa(summary.Groups)},
+		{Label: "Duplicate Files", Value: strconv.Itoa(summary.DuplicateFiles)},
+		{Label: "Wasted Bytes", Value: strconv.FormatInt(summary.WastedBytes, 10)},
+		{Label: "Scanned", Value: strconv.Itoa(summary.Scanned)},
+		{Label: "Hashed", Value: strconv.Itoa(summary.Hashed)},
+		{Label: "Cache Hits", Value: strconv.Itoa(summary.CacheHits)},
+		{Label: "Skipped Too Small", Value: strconv.Itoa(summary.SkippedTooSmall)},
+		{Label: "Errors", Value: strconv.Itoa(summary.Errors)},
+	})
+
+	printPrettySection("Duplicate Groups")
+	if len(groups) == 0 {
+		fmt.Println("No duplicate groups found.")
+		return nil
+	}
+	rows := make([][]string, 0)
+	for i, group := range groups {
+		groupID := strconv.Itoa(i + 1)
+		for _, path := range group.paths {
+			rows = append(rows, []string{
+				groupID,
+				group.hash,
+				strconv.FormatInt(group.size, 10),
+				path,
+			})
+		}
+	}
+	printPrettyTable([]string{"Group", "Hash", "Size", "Path"}, rows)
 	return nil
 }
 

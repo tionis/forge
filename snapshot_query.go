@@ -7,12 +7,157 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 type snapshotTreePathEntry struct {
 	Path  string
 	Entry treeEntry
+}
+
+type snapshotInspectEntryOutput struct {
+	Path       string   `json:"path"`
+	Kind       string   `json:"kind"`
+	TargetHash string   `json:"target_hash"`
+	Mode       uint32   `json:"mode"`
+	ModeOctal  string   `json:"mode_octal"`
+	ModTimeNS  int64    `json:"mod_time_ns"`
+	Size       int64    `json:"size"`
+	Tags       []string `json:"tags"`
+	TagsHash   string   `json:"tags_hash"`
+}
+
+type snapshotInspectOutput struct {
+	DB         string                       `json:"db"`
+	TreeHash   string                       `json:"tree_hash"`
+	Recursive  bool                         `json:"recursive"`
+	EntryCount int                          `json:"entry_count"`
+	Entries    []snapshotInspectEntryOutput `json:"entries"`
+}
+
+type snapshotQueryMatchOutput struct {
+	Path       string   `json:"path"`
+	Kind       string   `json:"kind"`
+	TargetHash string   `json:"target_hash"`
+	Tags       []string `json:"tags"`
+}
+
+type snapshotQueryOutput struct {
+	DB           string                     `json:"db"`
+	TreeHash     string                     `json:"tree_hash"`
+	RequiredTags []string                   `json:"required_tags"`
+	Kind         string                     `json:"kind"`
+	MatchCount   int                        `json:"match_count"`
+	Matches      []snapshotQueryMatchOutput `json:"matches"`
+}
+
+func renderSnapshotInspectOutput(mode string, output snapshotInspectOutput) error {
+	switch mode {
+	case outputModeKV:
+		fmt.Printf("db=%s\n", output.DB)
+		fmt.Printf("tree_hash=%s\n", output.TreeHash)
+		fmt.Printf("recursive=%t\n", output.Recursive)
+		fmt.Printf("entry_count=%d\n", output.EntryCount)
+		if output.Recursive {
+			fmt.Println("path\tkind\ttarget_hash\tmode\tmod_time_ns\tsize\ttags\ttags_hash")
+		} else {
+			fmt.Println("name\tkind\ttarget_hash\tmode\tmod_time_ns\tsize\ttags\ttags_hash")
+		}
+		for _, entry := range output.Entries {
+			fmt.Printf(
+				"%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\n",
+				entry.Path,
+				entry.Kind,
+				entry.TargetHash,
+				entry.ModeOctal,
+				entry.ModTimeNS,
+				entry.Size,
+				formatTags(entry.Tags),
+				entry.TagsHash,
+			)
+		}
+		return nil
+	case outputModeJSON:
+		return printJSON(output)
+	case outputModePretty:
+		printPrettyTitle("Snapshot Inspect")
+		printPrettyFields([]outputField{
+			{Label: "Tree Hash", Value: output.TreeHash},
+			{Label: "Database", Value: output.DB},
+			{Label: "Recursive", Value: strconv.FormatBool(output.Recursive)},
+			{Label: "Entries", Value: strconv.Itoa(output.EntryCount)},
+		})
+
+		printPrettySection("Tree Entries")
+		rows := make([][]string, 0, len(output.Entries))
+		for _, entry := range output.Entries {
+			rows = append(rows, []string{
+				entry.Path,
+				entry.Kind,
+				entry.TargetHash,
+				entry.ModeOctal,
+				strconv.FormatInt(entry.ModTimeNS, 10),
+				strconv.FormatInt(entry.Size, 10),
+				formatTags(entry.Tags),
+				entry.TagsHash,
+			})
+		}
+		if len(rows) == 0 {
+			fmt.Println("No entries found.")
+			return nil
+		}
+		printPrettyTable([]string{"Path", "Kind", "Target Hash", "Mode", "Mod Time (ns)", "Size", "Tags", "Tags Hash"}, rows)
+		return nil
+	default:
+		return fmt.Errorf("unsupported output mode %q", mode)
+	}
+}
+
+func renderSnapshotQueryOutput(mode string, output snapshotQueryOutput) error {
+	switch mode {
+	case outputModeKV:
+		fmt.Printf("db=%s\n", output.DB)
+		fmt.Printf("tree_hash=%s\n", output.TreeHash)
+		fmt.Printf("required_tags=%s\n", strings.Join(output.RequiredTags, ","))
+		fmt.Printf("kind=%s\n", output.Kind)
+		fmt.Printf("match_count=%d\n", output.MatchCount)
+		fmt.Println("path\tkind\ttarget_hash\ttags")
+		for _, match := range output.Matches {
+			fmt.Printf("%s\t%s\t%s\t%s\n", match.Path, match.Kind, match.TargetHash, formatTags(match.Tags))
+		}
+		return nil
+	case outputModeJSON:
+		return printJSON(output)
+	case outputModePretty:
+		printPrettyTitle("Snapshot Query")
+		printPrettyFields([]outputField{
+			{Label: "Tree Hash", Value: output.TreeHash},
+			{Label: "Database", Value: output.DB},
+			{Label: "Required Tags", Value: strings.Join(output.RequiredTags, ",")},
+			{Label: "Kind Filter", Value: output.Kind},
+			{Label: "Matches", Value: strconv.Itoa(output.MatchCount)},
+		})
+
+		printPrettySection("Matches")
+		rows := make([][]string, 0, len(output.Matches))
+		for _, match := range output.Matches {
+			rows = append(rows, []string{
+				match.Path,
+				match.Kind,
+				match.TargetHash,
+				formatTags(match.Tags),
+			})
+		}
+		if len(rows) == 0 {
+			fmt.Println("No matches found.")
+			return nil
+		}
+		printPrettyTable([]string{"Path", "Kind", "Target Hash", "Tags"}, rows)
+		return nil
+	default:
+		return fmt.Errorf("unsupported output mode %q", mode)
+	}
 }
 
 func runSnapshotInspectCommand(args []string) error {
@@ -30,10 +175,15 @@ func runSnapshotInspectCommand(args []string) error {
 	dbPath := fs.String("db", defaultDB, "Path to snapshot database")
 	treeHash := fs.String("tree", "", "Tree hash to inspect (required)")
 	recursive := fs.Bool("recursive", false, "Recursively inspect descendant tree entries")
+	outputMode := fs.String("output", outputModeAuto, "Output mode: auto|pretty|kv|json")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
+		return err
+	}
+	resolvedOutputMode, err := resolvePrettyKVJSONOutputMode(*outputMode)
+	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(*treeHash) == "" {
@@ -59,32 +209,36 @@ func runSnapshotInspectCommand(args []string) error {
 		return fmt.Errorf("tree %q not found", *treeHash)
 	}
 
-	fmt.Printf("db=%s\n", absDBPath)
-	fmt.Printf("tree_hash=%s\n", *treeHash)
-	fmt.Printf("recursive=%t\n", *recursive)
-
+	outEntries := make([]snapshotInspectEntryOutput, 0)
 	if *recursive {
 		records, err := collectTreeEntriesRecursive(db, *treeHash)
 		if err != nil {
 			return err
 		}
 
-		fmt.Printf("entry_count=%d\n", len(records))
-		fmt.Println("path\tkind\ttarget_hash\tmode\tmod_time_ns\tsize\ttags\ttags_hash")
 		for _, record := range records {
-			fmt.Printf(
-				"%s\t%s\t%s\t%04o\t%d\t%d\t%s\t%s\n",
-				record.Path,
-				record.Entry.Kind,
-				record.Entry.TargetHash,
-				record.Entry.Mode&0o7777,
-				record.Entry.ModTimeUnix,
-				record.Entry.Size,
-				formatTags(record.Entry.Tags),
-				record.Entry.TagsHash,
-			)
+			outEntries = append(outEntries, snapshotInspectEntryOutput{
+				Path:       record.Path,
+				Kind:       record.Entry.Kind,
+				TargetHash: record.Entry.TargetHash,
+				Mode:       record.Entry.Mode,
+				ModeOctal:  fmt.Sprintf("%04o", record.Entry.Mode&0o7777),
+				ModTimeNS:  record.Entry.ModTimeUnix,
+				Size:       record.Entry.Size,
+				Tags:       append([]string(nil), record.Entry.Tags...),
+				TagsHash:   record.Entry.TagsHash,
+			})
 		}
-		return nil
+		return renderSnapshotInspectOutput(
+			resolvedOutputMode,
+			snapshotInspectOutput{
+				DB:         absDBPath,
+				TreeHash:   *treeHash,
+				Recursive:  true,
+				EntryCount: len(outEntries),
+				Entries:    outEntries,
+			},
+		)
 	}
 
 	entries, err := loadTreeEntriesWithTags(db, *treeHash)
@@ -92,23 +246,30 @@ func runSnapshotInspectCommand(args []string) error {
 		return err
 	}
 
-	fmt.Printf("entry_count=%d\n", len(entries))
-	fmt.Println("name\tkind\ttarget_hash\tmode\tmod_time_ns\tsize\ttags\ttags_hash")
 	for _, entry := range entries {
-		fmt.Printf(
-			"%s\t%s\t%s\t%04o\t%d\t%d\t%s\t%s\n",
-			entry.Name,
-			entry.Kind,
-			entry.TargetHash,
-			entry.Mode&0o7777,
-			entry.ModTimeUnix,
-			entry.Size,
-			formatTags(entry.Tags),
-			entry.TagsHash,
-		)
+		outEntries = append(outEntries, snapshotInspectEntryOutput{
+			Path:       entry.Name,
+			Kind:       entry.Kind,
+			TargetHash: entry.TargetHash,
+			Mode:       entry.Mode,
+			ModeOctal:  fmt.Sprintf("%04o", entry.Mode&0o7777),
+			ModTimeNS:  entry.ModTimeUnix,
+			Size:       entry.Size,
+			Tags:       append([]string(nil), entry.Tags...),
+			TagsHash:   entry.TagsHash,
+		})
 	}
 
-	return nil
+	return renderSnapshotInspectOutput(
+		resolvedOutputMode,
+		snapshotInspectOutput{
+			DB:         absDBPath,
+			TreeHash:   *treeHash,
+			Recursive:  false,
+			EntryCount: len(outEntries),
+			Entries:    outEntries,
+		},
+	)
 }
 
 func runSnapshotQueryCommand(args []string) error {
@@ -127,10 +288,15 @@ func runSnapshotQueryCommand(args []string) error {
 	treeHash := fs.String("tree", "", "Tree hash to query (required)")
 	tagsFlag := fs.String("tags", "", "Comma-separated list of required tags (required)")
 	kindFilter := fs.String("kind", snapshotKindFile, "Entry kind filter: file|symlink|tree|all")
+	outputMode := fs.String("output", outputModeAuto, "Output mode: auto|pretty|kv|json")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
+		return err
+	}
+	resolvedOutputMode, err := resolvePrettyKVJSONOutputMode(*outputMode)
+	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(*treeHash) == "" {
@@ -184,17 +350,27 @@ func runSnapshotQueryCommand(args []string) error {
 		matches = append(matches, record)
 	}
 
-	fmt.Printf("db=%s\n", absDBPath)
-	fmt.Printf("tree_hash=%s\n", *treeHash)
-	fmt.Printf("required_tags=%s\n", strings.Join(requiredTags, ","))
-	fmt.Printf("kind=%s\n", filter)
-	fmt.Printf("match_count=%d\n", len(matches))
-	fmt.Println("path\tkind\ttarget_hash\ttags")
+	outMatches := make([]snapshotQueryMatchOutput, 0, len(matches))
 	for _, match := range matches {
-		fmt.Printf("%s\t%s\t%s\t%s\n", match.Path, match.Entry.Kind, match.Entry.TargetHash, formatTags(match.Entry.Tags))
+		outMatches = append(outMatches, snapshotQueryMatchOutput{
+			Path:       match.Path,
+			Kind:       match.Entry.Kind,
+			TargetHash: match.Entry.TargetHash,
+			Tags:       append([]string(nil), match.Entry.Tags...),
+		})
 	}
 
-	return nil
+	return renderSnapshotQueryOutput(
+		resolvedOutputMode,
+		snapshotQueryOutput{
+			DB:           absDBPath,
+			TreeHash:     *treeHash,
+			RequiredTags: append([]string(nil), requiredTags...),
+			Kind:         filter,
+			MatchCount:   len(outMatches),
+			Matches:      outMatches,
+		},
+	)
 }
 
 func treeHashExists(db *sql.DB, treeHash string) (bool, error) {

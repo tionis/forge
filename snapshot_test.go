@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -323,6 +324,92 @@ func TestSnapshotSubcommandsInspectAndQuery(t *testing.T) {
 	}
 	if err := runSnapshotCommand([]string{"query", "-db", dbPath, "-tree", treeHash, "-tags", "music,work"}); err != nil {
 		t.Fatalf("snapshot query command failed: %v", err)
+	}
+}
+
+func TestSnapshotInspectAndQueryJSONOutput(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "snapshot.db")
+	db, err := openSnapshotDB(dbPath)
+	if err != nil {
+		t.Fatalf("open snapshot db: %v", err)
+	}
+
+	entries := []treeEntry{
+		{
+			Name:        "a.txt",
+			Kind:        snapshotKindFile,
+			TargetHash:  strings.Repeat("a", 64),
+			Mode:        0o100644,
+			ModTimeUnix: 100,
+			Size:        3,
+			Tags:        []string{"music", "work"},
+			TagsHash:    hashNormalizedTags([]string{"music", "work"}),
+		},
+		{
+			Name:        "b.txt",
+			Kind:        snapshotKindFile,
+			TargetHash:  strings.Repeat("b", 64),
+			Mode:        0o100644,
+			ModTimeUnix: 100,
+			Size:        5,
+			Tags:        []string{"music"},
+			TagsHash:    hashNormalizedTags([]string{"music"}),
+		},
+	}
+	treeHash := hashTree(entries)
+
+	tx, err := db.Begin()
+	if err != nil {
+		db.Close()
+		t.Fatalf("begin tx: %v", err)
+	}
+	if err := insertTree(tx, treeHash, entries); err != nil {
+		tx.Rollback()
+		db.Close()
+		t.Fatalf("insert tree: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		db.Close()
+		t.Fatalf("commit tx: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	inspectOut, err := captureStdout(t, func() error {
+		return runSnapshotCommand([]string{"inspect", "-db", dbPath, "-tree", treeHash, "-output", "json"})
+	})
+	if err != nil {
+		t.Fatalf("snapshot inspect json output: %v", err)
+	}
+
+	var inspectPayload snapshotInspectOutput
+	if err := json.Unmarshal([]byte(inspectOut), &inspectPayload); err != nil {
+		t.Fatalf("unmarshal inspect payload: %v\noutput=%s", err, inspectOut)
+	}
+	if inspectPayload.EntryCount != 2 {
+		t.Fatalf("expected entry_count=2, got %d", inspectPayload.EntryCount)
+	}
+	if len(inspectPayload.Entries) != 2 {
+		t.Fatalf("expected 2 inspect entries, got %d", len(inspectPayload.Entries))
+	}
+
+	queryOut, err := captureStdout(t, func() error {
+		return runSnapshotCommand([]string{"query", "-db", dbPath, "-tree", treeHash, "-tags", "music,work", "-output", "json"})
+	})
+	if err != nil {
+		t.Fatalf("snapshot query json output: %v", err)
+	}
+
+	var queryPayload snapshotQueryOutput
+	if err := json.Unmarshal([]byte(queryOut), &queryPayload); err != nil {
+		t.Fatalf("unmarshal query payload: %v\noutput=%s", err, queryOut)
+	}
+	if queryPayload.MatchCount != 1 {
+		t.Fatalf("expected match_count=1, got %d", queryPayload.MatchCount)
+	}
+	if len(queryPayload.Matches) != 1 || queryPayload.Matches[0].Path != "a.txt" {
+		t.Fatalf("unexpected query matches: %+v", queryPayload.Matches)
 	}
 }
 

@@ -16,9 +16,18 @@ These rules define how Forge tools should behave so commands can be composed rel
 
 ## Output Conventions
 
-- Prefer machine-readable line output for primary fields (`key=value`).
-- Use tabular sections only for repeated rows.
-- Keep field names stable across versions when possible.
+- Commands that return structured data should expose an `-output` flag.
+- Standard output modes:
+  - `auto`: choose human-friendly output when attached to a terminal, script-friendly output otherwise.
+  - `pretty`: human-friendly summaries/tables for interactive use.
+  - `kv`: stable `key=value` fields for scripting.
+  - `json`: stable structured JSON for scripting/integration.
+- `auto` should resolve to:
+  - `pretty` when stdout is a terminal.
+  - `kv` for non-interactive stdout (pipes/redirection).
+- Keep machine-facing field names stable across versions when possible.
+- Use tabular sections for repeated rows in human-facing modes.
+- If a command already has stable script modes (for example `paths`/`paths0`), keep them additive and backward-compatible.
 
 ## Error Behavior
 

@@ -73,6 +73,209 @@ type snapshotDiffChange struct {
 	Detail string
 }
 
+type snapshotCreateStatsOutput struct {
+	Trees    int `json:"trees"`
+	Files    int `json:"files"`
+	Symlinks int `json:"symlinks"`
+	Special  int `json:"special"`
+}
+
+type snapshotCreateOutput struct {
+	SnapshotTimeNS  int64                     `json:"snapshot_time_ns"`
+	SnapshotTimeUTC string                    `json:"snapshot_time_utc"`
+	Path            string                    `json:"path"`
+	TargetKind      string                    `json:"target_kind"`
+	TargetHash      string                    `json:"target_hash"`
+	DB              string                    `json:"db"`
+	Stats           snapshotCreateStatsOutput `json:"stats"`
+}
+
+type snapshotHistoryEntryOutput struct {
+	SnapshotTimeNS  int64  `json:"snapshot_time_ns"`
+	SnapshotTimeUTC string `json:"snapshot_time_utc"`
+	TargetKind      string `json:"target_kind"`
+	TargetHash      string `json:"target_hash"`
+}
+
+type snapshotHistoryOutput struct {
+	Path    string                       `json:"path"`
+	DB      string                       `json:"db"`
+	Count   int                          `json:"count"`
+	Entries []snapshotHistoryEntryOutput `json:"entries"`
+}
+
+type snapshotDiffPointerOutput struct {
+	TimeNS  int64  `json:"time_ns"`
+	TimeUTC string `json:"time_utc"`
+	Kind    string `json:"kind"`
+	Hash    string `json:"hash"`
+}
+
+type snapshotDiffSummaryOutput struct {
+	Total      int `json:"total"`
+	Added      int `json:"added"`
+	Removed    int `json:"removed"`
+	Modified   int `json:"modified"`
+	TypeChange int `json:"type_change"`
+}
+
+type snapshotDiffChangeOutput struct {
+	Code   string `json:"code"`
+	Path   string `json:"path"`
+	Detail string `json:"detail"`
+}
+
+type snapshotDiffOutput struct {
+	Path    string                     `json:"path"`
+	DB      string                     `json:"db"`
+	From    snapshotDiffPointerOutput  `json:"from"`
+	To      snapshotDiffPointerOutput  `json:"to"`
+	Summary snapshotDiffSummaryOutput  `json:"summary"`
+	Changes []snapshotDiffChangeOutput `json:"changes"`
+}
+
+func renderSnapshotCreateOutput(mode string, output snapshotCreateOutput) error {
+	switch mode {
+	case outputModeKV:
+		fmt.Printf("snapshot_time_ns=%d\n", output.SnapshotTimeNS)
+		fmt.Printf("path=%s\n", output.Path)
+		fmt.Printf("target_kind=%s\n", output.TargetKind)
+		fmt.Printf("target_hash=%s\n", output.TargetHash)
+		fmt.Printf("db=%s\n", output.DB)
+		fmt.Printf(
+			"trees=%d files=%d symlinks=%d special=%d\n",
+			output.Stats.Trees,
+			output.Stats.Files,
+			output.Stats.Symlinks,
+			output.Stats.Special,
+		)
+		return nil
+	case outputModeJSON:
+		return printJSON(output)
+	case outputModePretty:
+		printPrettyTitle("Snapshot Created")
+		printPrettyFields([]outputField{
+			{Label: "Snapshot Time", Value: fmt.Sprintf("%d (%s)", output.SnapshotTimeNS, output.SnapshotTimeUTC)},
+			{Label: "Path", Value: output.Path},
+			{Label: "Target Kind", Value: output.TargetKind},
+			{Label: "Target Hash", Value: output.TargetHash},
+			{Label: "Database", Value: output.DB},
+		})
+		printPrettySection("Ingest Stats")
+		printPrettyFields([]outputField{
+			{Label: "Trees", Value: strconv.Itoa(output.Stats.Trees)},
+			{Label: "Files", Value: strconv.Itoa(output.Stats.Files)},
+			{Label: "Symlinks", Value: strconv.Itoa(output.Stats.Symlinks)},
+			{Label: "Special", Value: strconv.Itoa(output.Stats.Special)},
+		})
+		return nil
+	default:
+		return fmt.Errorf("unsupported output mode %q", mode)
+	}
+}
+
+func renderSnapshotHistoryOutput(mode string, output snapshotHistoryOutput) error {
+	switch mode {
+	case outputModeKV:
+		fmt.Printf("path=%s\n", output.Path)
+		fmt.Printf("db=%s\n", output.DB)
+		fmt.Printf("count=%d\n", output.Count)
+		fmt.Println("snapshot_time_ns\tsnapshot_time_utc\ttarget_kind\ttarget_hash")
+		for _, entry := range output.Entries {
+			fmt.Printf("%d\t%s\t%s\t%s\n", entry.SnapshotTimeNS, entry.SnapshotTimeUTC, entry.TargetKind, entry.TargetHash)
+		}
+		return nil
+	case outputModeJSON:
+		return printJSON(output)
+	case outputModePretty:
+		printPrettyTitle("Snapshot History")
+		printPrettyFields([]outputField{
+			{Label: "Path", Value: output.Path},
+			{Label: "Database", Value: output.DB},
+			{Label: "Entries", Value: strconv.Itoa(output.Count)},
+		})
+
+		printPrettySection("Snapshots")
+		rows := make([][]string, 0, len(output.Entries))
+		for _, entry := range output.Entries {
+			rows = append(rows, []string{
+				entry.SnapshotTimeUTC,
+				strconv.FormatInt(entry.SnapshotTimeNS, 10),
+				entry.TargetKind,
+				entry.TargetHash,
+			})
+		}
+		if len(rows) == 0 {
+			fmt.Println("No snapshots found.")
+			return nil
+		}
+		printPrettyTable([]string{"Time (UTC)", "Time (ns)", "Kind", "Hash"}, rows)
+		return nil
+	default:
+		return fmt.Errorf("unsupported output mode %q", mode)
+	}
+}
+
+func renderSnapshotDiffOutput(mode string, output snapshotDiffOutput) error {
+	switch mode {
+	case outputModeKV:
+		fmt.Printf("path=%s\n", output.Path)
+		fmt.Printf("db=%s\n", output.DB)
+		fmt.Printf("from_time_ns=%d\n", output.From.TimeNS)
+		fmt.Printf("to_time_ns=%d\n", output.To.TimeNS)
+		fmt.Printf("from_kind=%s\n", output.From.Kind)
+		fmt.Printf("to_kind=%s\n", output.To.Kind)
+		fmt.Printf("from_hash=%s\n", output.From.Hash)
+		fmt.Printf("to_hash=%s\n", output.To.Hash)
+		fmt.Println("code\tpath\tdetail")
+		for _, change := range output.Changes {
+			fmt.Printf("%s\t%s\t%s\n", change.Code, change.Path, change.Detail)
+		}
+		fmt.Printf(
+			"summary total=%d added=%d removed=%d modified=%d type=%d\n",
+			output.Summary.Total,
+			output.Summary.Added,
+			output.Summary.Removed,
+			output.Summary.Modified,
+			output.Summary.TypeChange,
+		)
+		return nil
+	case outputModeJSON:
+		return printJSON(output)
+	case outputModePretty:
+		printPrettyTitle("Snapshot Diff")
+		printPrettyFields([]outputField{
+			{Label: "Path", Value: output.Path},
+			{Label: "Database", Value: output.DB},
+			{Label: "From", Value: fmt.Sprintf("%s (%d) %s", output.From.TimeUTC, output.From.TimeNS, output.From.Hash)},
+			{Label: "To", Value: fmt.Sprintf("%s (%d) %s", output.To.TimeUTC, output.To.TimeNS, output.To.Hash)},
+		})
+
+		printPrettySection("Change Summary")
+		printPrettyFields([]outputField{
+			{Label: "Total", Value: strconv.Itoa(output.Summary.Total)},
+			{Label: "Added", Value: strconv.Itoa(output.Summary.Added)},
+			{Label: "Removed", Value: strconv.Itoa(output.Summary.Removed)},
+			{Label: "Modified", Value: strconv.Itoa(output.Summary.Modified)},
+			{Label: "Type Changed", Value: strconv.Itoa(output.Summary.TypeChange)},
+		})
+
+		printPrettySection("Changes")
+		rows := make([][]string, 0, len(output.Changes))
+		for _, change := range output.Changes {
+			rows = append(rows, []string{change.Code, change.Path, change.Detail})
+		}
+		if len(rows) == 0 {
+			fmt.Println("No differences detected.")
+			return nil
+		}
+		printPrettyTable([]string{"Code", "Path", "Detail"}, rows)
+		return nil
+	default:
+		return fmt.Errorf("unsupported output mode %q", mode)
+	}
+}
+
 func runSnapshotCommand(args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
@@ -104,10 +307,15 @@ func runSnapshotCreateCommand(args []string) error {
 
 	dbPath := fs.String("db", defaultDB, "Path to snapshot database")
 	verbose := fs.Bool("v", false, "Verbose output")
+	outputMode := fs.String("output", outputModeAuto, "Output mode: auto|pretty|kv|json")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
+		return err
+	}
+	resolvedOutputMode, err := resolvePrettyKVJSONOutputMode(*outputMode)
+	if err != nil {
 		return err
 	}
 
@@ -192,13 +400,23 @@ func runSnapshotCreateCommand(args []string) error {
 		return fmt.Errorf("commit snapshot transaction: %w", err)
 	}
 
-	fmt.Printf("snapshot_time_ns=%d\n", snapshotTime)
-	fmt.Printf("path=%s\n", absTargetPath)
-	fmt.Printf("target_kind=%s\n", targetKind)
-	fmt.Printf("target_hash=%s\n", targetHash)
-	fmt.Printf("db=%s\n", absDBPath)
-	fmt.Printf("trees=%d files=%d symlinks=%d special=%d\n", stats.trees, stats.files, stats.symlinks, stats.special)
-	return nil
+	return renderSnapshotCreateOutput(
+		resolvedOutputMode,
+		snapshotCreateOutput{
+			SnapshotTimeNS:  snapshotTime,
+			SnapshotTimeUTC: time.Unix(0, snapshotTime).UTC().Format(time.RFC3339Nano),
+			Path:            absTargetPath,
+			TargetKind:      targetKind,
+			TargetHash:      targetHash,
+			DB:              absDBPath,
+			Stats: snapshotCreateStatsOutput{
+				Trees:    stats.trees,
+				Files:    stats.files,
+				Symlinks: stats.symlinks,
+				Special:  stats.special,
+			},
+		},
+	)
 }
 
 func runSnapshotHistoryCommand(args []string) error {
@@ -215,10 +433,15 @@ func runSnapshotHistoryCommand(args []string) error {
 
 	dbPath := fs.String("db", defaultDB, "Path to snapshot database")
 	limit := fs.Int("limit", 20, "Maximum number of history entries to return")
+	outputMode := fs.String("output", outputModeAuto, "Output mode: auto|pretty|kv|json")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
+		return err
+	}
+	resolvedOutputMode, err := resolvePrettyKVJSONOutputMode(*outputMode)
+	if err != nil {
 		return err
 	}
 	if *limit <= 0 {
@@ -250,16 +473,25 @@ func runSnapshotHistoryCommand(args []string) error {
 		return err
 	}
 
-	fmt.Printf("path=%s\n", absTargetPath)
-	fmt.Printf("db=%s\n", absDBPath)
-	fmt.Printf("count=%d\n", len(pointers))
-	fmt.Println("snapshot_time_ns\tsnapshot_time_utc\ttarget_kind\ttarget_hash")
+	entries := make([]snapshotHistoryEntryOutput, 0, len(pointers))
 	for _, pointer := range pointers {
-		t := time.Unix(0, pointer.SnapshotTimeNS).UTC().Format(time.RFC3339Nano)
-		fmt.Printf("%d\t%s\t%s\t%s\n", pointer.SnapshotTimeNS, t, pointer.TargetKind, pointer.TargetHash)
+		entries = append(entries, snapshotHistoryEntryOutput{
+			SnapshotTimeNS:  pointer.SnapshotTimeNS,
+			SnapshotTimeUTC: time.Unix(0, pointer.SnapshotTimeNS).UTC().Format(time.RFC3339Nano),
+			TargetKind:      pointer.TargetKind,
+			TargetHash:      pointer.TargetHash,
+		})
 	}
 
-	return nil
+	return renderSnapshotHistoryOutput(
+		resolvedOutputMode,
+		snapshotHistoryOutput{
+			Path:    absTargetPath,
+			DB:      absDBPath,
+			Count:   len(entries),
+			Entries: entries,
+		},
+	)
 }
 
 func runSnapshotDiffCommand(args []string) error {
@@ -277,10 +509,15 @@ func runSnapshotDiffCommand(args []string) error {
 	dbPath := fs.String("db", defaultDB, "Path to snapshot database")
 	fromTime := fs.Int64("from", 0, "Older snapshot time (unix nanoseconds)")
 	toTime := fs.Int64("to", 0, "Newer snapshot time (unix nanoseconds)")
+	outputMode := fs.String("output", outputModeAuto, "Output mode: auto|pretty|kv|json")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
+		return err
+	}
+	resolvedOutputMode, err := resolvePrettyKVJSONOutputMode(*outputMode)
+	if err != nil {
 		return err
 	}
 	if (*fromTime == 0) != (*toTime == 0) {
@@ -317,22 +554,17 @@ func runSnapshotDiffCommand(args []string) error {
 		return err
 	}
 
-	fmt.Printf("path=%s\n", absTargetPath)
-	fmt.Printf("db=%s\n", absDBPath)
-	fmt.Printf("from_time_ns=%d\n", fromPointer.SnapshotTimeNS)
-	fmt.Printf("to_time_ns=%d\n", toPointer.SnapshotTimeNS)
-	fmt.Printf("from_kind=%s\n", fromPointer.TargetKind)
-	fmt.Printf("to_kind=%s\n", toPointer.TargetKind)
-	fmt.Printf("from_hash=%s\n", fromPointer.TargetHash)
-	fmt.Printf("to_hash=%s\n", toPointer.TargetHash)
-	fmt.Println("code\tpath\tdetail")
-
 	added := 0
 	removed := 0
 	modified := 0
 	typeChanged := 0
+	changeOutput := make([]snapshotDiffChangeOutput, 0, len(changes))
 	for _, change := range changes {
-		fmt.Printf("%s\t%s\t%s\n", change.Code, change.Path, change.Detail)
+		changeOutput = append(changeOutput, snapshotDiffChangeOutput{
+			Code:   change.Code,
+			Path:   change.Path,
+			Detail: change.Detail,
+		})
 		switch change.Code {
 		case "A":
 			added++
@@ -345,8 +577,33 @@ func runSnapshotDiffCommand(args []string) error {
 		}
 	}
 
-	fmt.Printf("summary total=%d added=%d removed=%d modified=%d type=%d\n", len(changes), added, removed, modified, typeChanged)
-	return nil
+	return renderSnapshotDiffOutput(
+		resolvedOutputMode,
+		snapshotDiffOutput{
+			Path: absTargetPath,
+			DB:   absDBPath,
+			From: snapshotDiffPointerOutput{
+				TimeNS:  fromPointer.SnapshotTimeNS,
+				TimeUTC: time.Unix(0, fromPointer.SnapshotTimeNS).UTC().Format(time.RFC3339Nano),
+				Kind:    fromPointer.TargetKind,
+				Hash:    fromPointer.TargetHash,
+			},
+			To: snapshotDiffPointerOutput{
+				TimeNS:  toPointer.SnapshotTimeNS,
+				TimeUTC: time.Unix(0, toPointer.SnapshotTimeNS).UTC().Format(time.RFC3339Nano),
+				Kind:    toPointer.TargetKind,
+				Hash:    toPointer.TargetHash,
+			},
+			Summary: snapshotDiffSummaryOutput{
+				Total:      len(changes),
+				Added:      added,
+				Removed:    removed,
+				Modified:   modified,
+				TypeChange: typeChanged,
+			},
+			Changes: changeOutput,
+		},
+	)
 }
 
 func defaultSnapshotDBPath() string {

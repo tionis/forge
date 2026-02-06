@@ -27,6 +27,10 @@ Top-level commands:
 - `forge hashmap`
 - `forge completion`
 
+Output mode convention:
+- Many commands support `-output auto|pretty|kv|json`.
+- `auto` chooses `pretty` for interactive terminals and `kv` for non-interactive/scripted output.
+
 ## Hash Tool
 
 ```bash
@@ -39,6 +43,7 @@ Flags:
 - `-algos`: comma-separated algorithms (default `blake3`)
 - `-clean`: force cache invalidation and re-hash
 - `-remove`: remove all `user.checksum.*` xattrs
+- `-output`: output mode `auto|pretty|kv|json` (default `auto`)
 
 Examples:
 
@@ -58,10 +63,12 @@ Flags:
 - `-min-size`: only consider files with size >= `min-size` bytes (default `1`)
 - `-cache`: use `user.checksum.blake3` + `user.checksum.mtime` cache when valid (default `true`)
 - `-update-cache`: write missing/stale BLAKE3 cache values while scanning (default `false`)
-- `-output`: output mode `table|json|paths|paths0` (default `table`)
+- `-output`: output mode `auto|pretty|table|json|paths|paths0` (default `auto`)
 - `-v`: verbose output
 
 `-output` modes:
+- `auto`: `pretty` on terminal, `table` otherwise
+- `pretty`: human-friendly summary + ASCII tables
 - `table`: summary `key=value` lines plus `group/hash/size/path` table
 - `json`: full structured JSON document
 - `paths`: duplicate file paths, one per line
@@ -108,6 +115,7 @@ forge snapshot query -tree <tree_hash> -tags tag1,tag2 [flags]
 
 Snapshot flags:
 - `-db`: snapshot DB path (default from `${FORGE_SNAPSHOT_DB}` or `${XDG_DATA_HOME}/forge/snapshot.db`, fallback `~/.local/share/forge/snapshot.db`)
+- `-output`: output mode `auto|pretty|kv|json` (create/history/diff/inspect/query, default `auto`)
 - `-v`: verbose output (create)
 - `-limit`: max rows (history)
 - `-from`: older snapshot time in unix ns (diff)
@@ -161,6 +169,7 @@ forge hashmap show -blake3 <blake3>
 
 Hashmap flags:
 - `-db`: snapshot DB path (same default resolution as `forge snapshot`)
+- `-output`: output mode `auto|pretty|kv|json` (default `auto`)
 - `-v`: verbose output (ingest)
 - `-algo`: algorithm name (lookup)
 - `-digest`: digest value (lookup)
@@ -173,6 +182,7 @@ Hashmap flags:
 - Snapshot architecture: [`docs/snapshot_architecture.md`](docs/snapshot_architecture.md)
 - Hashmap tool: [`docs/hashmap_tool.md`](docs/hashmap_tool.md)
 - Tool rules: [`docs/tool_rules.md`](docs/tool_rules.md)
+- Output modes: [`docs/output_modes.md`](docs/output_modes.md)
 - Adding tools: [`docs/adding_tools.md`](docs/adding_tools.md)
 - Hash metadata spec: [`docs/file_hashing_via_xattrs.md`](docs/file_hashing_via_xattrs.md)
 

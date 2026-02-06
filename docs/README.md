@@ -5,6 +5,7 @@ This folder contains architecture notes and tool contracts for Forge.
 ## Structure
 
 - `tool_rules.md`: cross-tool behavioral rules and conventions.
+- `output_modes.md`: shared output-mode contract (`auto`, `pretty`, `kv`, `json`) and compatibility guidance.
 - `adding_tools.md`: command scaffolding and contribution workflow for new tools.
 - `dupes_tool.md`: `forge dupes` duplicate-detection behavior and output.
 - `snapshot_architecture.md`: snapshot schema, canonical hashing, tag normalization, and safety constraints.

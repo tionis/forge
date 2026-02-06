@@ -198,6 +198,29 @@ func TestRunDupesCommandRejectsInvalidOutputMode(t *testing.T) {
 	}
 }
 
+func TestRunDupesCommandAutoOutputFallsBackToTableWhenNotTTY(t *testing.T) {
+	root := t.TempDir()
+
+	aPath := filepath.Join(root, "a.txt")
+	bPath := filepath.Join(root, "b.txt")
+	if err := os.WriteFile(aPath, []byte("dupe-auto"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if err := os.WriteFile(bPath, []byte("dupe-auto"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+
+	out, err := captureStdout(t, func() error {
+		return runDupesCommand([]string{"-cache=false", "-output", "auto", root})
+	})
+	if err != nil {
+		t.Fatalf("runDupesCommand auto: %v", err)
+	}
+	if !strings.Contains(out, "root="+root) {
+		t.Fatalf("expected table/kv fallback output with root field, got: %s", out)
+	}
+}
+
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
 

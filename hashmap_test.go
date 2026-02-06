@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -74,5 +75,68 @@ func TestHashmapLookupAndShowCommands(t *testing.T) {
 	}
 	if err := runHashmapShowCommand([]string{"-db", dbPath, "-blake3", blake3Digest}); err != nil {
 		t.Fatalf("run hashmap show command: %v", err)
+	}
+}
+
+func TestHashmapLookupAndShowJSONOutput(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "snapshot.db")
+	db, err := openSnapshotDB(dbPath)
+	if err != nil {
+		t.Fatalf("open snapshot db: %v", err)
+	}
+
+	blake3Digest := strings.Repeat("b", 64)
+	sha256Digest := strings.Repeat("c", 64)
+	md5Digest := strings.Repeat("d", 32)
+
+	tx, err := db.Begin()
+	if err != nil {
+		db.Close()
+		t.Fatalf("begin tx: %v", err)
+	}
+	if err := upsertHashMapping(tx, blake3Digest, "sha256", sha256Digest); err != nil {
+		tx.Rollback()
+		db.Close()
+		t.Fatalf("upsert sha256 mapping: %v", err)
+	}
+	if err := upsertHashMapping(tx, blake3Digest, "md5", md5Digest); err != nil {
+		tx.Rollback()
+		db.Close()
+		t.Fatalf("upsert md5 mapping: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		db.Close()
+		t.Fatalf("commit tx: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	lookupOut, err := captureStdout(t, func() error {
+		return runHashmapLookupCommand([]string{"-db", dbPath, "-algo", "sha256", "-digest", sha256Digest, "-output", "json"})
+	})
+	if err != nil {
+		t.Fatalf("run hashmap lookup json command: %v", err)
+	}
+	var lookupPayload hashmapLookupOutput
+	if err := json.Unmarshal([]byte(lookupOut), &lookupPayload); err != nil {
+		t.Fatalf("unmarshal lookup payload: %v\noutput=%s", err, lookupOut)
+	}
+	if lookupPayload.Count != 1 || len(lookupPayload.Blake3s) != 1 || lookupPayload.Blake3s[0] != blake3Digest {
+		t.Fatalf("unexpected lookup payload: %+v", lookupPayload)
+	}
+
+	showOut, err := captureStdout(t, func() error {
+		return runHashmapShowCommand([]string{"-db", dbPath, "-blake3", blake3Digest, "-output", "json"})
+	})
+	if err != nil {
+		t.Fatalf("run hashmap show json command: %v", err)
+	}
+	var showPayload hashmapShowOutput
+	if err := json.Unmarshal([]byte(showOut), &showPayload); err != nil {
+		t.Fatalf("unmarshal show payload: %v\noutput=%s", err, showOut)
+	}
+	if showPayload.Count != 2 || len(showPayload.Mappings) != 2 {
+		t.Fatalf("unexpected show payload: %+v", showPayload)
 	}
 }

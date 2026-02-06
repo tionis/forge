@@ -22,9 +22,152 @@ type hashmapIngestStats struct {
 }
 
 type hashmapMapping struct {
-	Blake3 string
-	Algo   string
-	Digest string
+	Blake3 string `json:"blake3,omitempty"`
+	Algo   string `json:"algo"`
+	Digest string `json:"digest"`
+}
+
+type hashmapIngestStatsOutput struct {
+	Scanned          int `json:"scanned"`
+	MappedFiles      int `json:"mapped_files"`
+	MappingsUpserted int `json:"mappings_upserted"`
+	SkippedUncached  int `json:"skipped_uncached"`
+	SkippedStale     int `json:"skipped_stale"`
+	SkippedNoBlake3  int `json:"skipped_no_blake3"`
+	Errors           int `json:"errors"`
+}
+
+type hashmapIngestOutput struct {
+	DB    string                   `json:"db"`
+	Root  string                   `json:"root"`
+	Stats hashmapIngestStatsOutput `json:"stats"`
+}
+
+type hashmapLookupOutput struct {
+	DB      string   `json:"db"`
+	Algo    string   `json:"algo"`
+	Digest  string   `json:"digest"`
+	Count   int      `json:"count"`
+	Blake3s []string `json:"blake3"`
+}
+
+type hashmapShowOutput struct {
+	DB       string           `json:"db"`
+	Blake3   string           `json:"blake3"`
+	Count    int              `json:"count"`
+	Mappings []hashmapMapping `json:"mappings"`
+}
+
+func renderHashmapIngestOutput(mode string, output hashmapIngestOutput) error {
+	switch mode {
+	case outputModeKV:
+		fmt.Printf("db=%s\n", output.DB)
+		fmt.Printf("root=%s\n", output.Root)
+		fmt.Printf("scanned=%d\n", output.Stats.Scanned)
+		fmt.Printf("mapped_files=%d\n", output.Stats.MappedFiles)
+		fmt.Printf("mappings_upserted=%d\n", output.Stats.MappingsUpserted)
+		fmt.Printf("skipped_uncached=%d\n", output.Stats.SkippedUncached)
+		fmt.Printf("skipped_stale=%d\n", output.Stats.SkippedStale)
+		fmt.Printf("skipped_no_blake3=%d\n", output.Stats.SkippedNoBlake3)
+		fmt.Printf("errors=%d\n", output.Stats.Errors)
+		return nil
+	case outputModeJSON:
+		return printJSON(output)
+	case outputModePretty:
+		printPrettyTitle("Hashmap Ingest")
+		printPrettyFields([]outputField{
+			{Label: "Database", Value: output.DB},
+			{Label: "Root", Value: output.Root},
+		})
+
+		printPrettySection("Ingest Stats")
+		printPrettyFields([]outputField{
+			{Label: "Scanned", Value: strconv.Itoa(output.Stats.Scanned)},
+			{Label: "Mapped Files", Value: strconv.Itoa(output.Stats.MappedFiles)},
+			{Label: "Mappings Upserted", Value: strconv.Itoa(output.Stats.MappingsUpserted)},
+			{Label: "Skipped Uncached", Value: strconv.Itoa(output.Stats.SkippedUncached)},
+			{Label: "Skipped Stale", Value: strconv.Itoa(output.Stats.SkippedStale)},
+			{Label: "Skipped No BLAKE3", Value: strconv.Itoa(output.Stats.SkippedNoBlake3)},
+			{Label: "Errors", Value: strconv.Itoa(output.Stats.Errors)},
+		})
+		return nil
+	default:
+		return fmt.Errorf("unsupported output mode %q", mode)
+	}
+}
+
+func renderHashmapLookupOutput(mode string, output hashmapLookupOutput) error {
+	switch mode {
+	case outputModeKV:
+		fmt.Printf("db=%s\n", output.DB)
+		fmt.Printf("algo=%s\n", output.Algo)
+		fmt.Printf("digest=%s\n", output.Digest)
+		fmt.Printf("count=%d\n", output.Count)
+		fmt.Println("blake3")
+		for _, digest := range output.Blake3s {
+			fmt.Println(digest)
+		}
+		return nil
+	case outputModeJSON:
+		return printJSON(output)
+	case outputModePretty:
+		printPrettyTitle("Hashmap Lookup")
+		printPrettyFields([]outputField{
+			{Label: "Database", Value: output.DB},
+			{Label: "Algorithm", Value: output.Algo},
+			{Label: "Digest", Value: output.Digest},
+			{Label: "Matches", Value: strconv.Itoa(output.Count)},
+		})
+		printPrettySection("BLAKE3 Digests")
+		if len(output.Blake3s) == 0 {
+			fmt.Println("No matches found.")
+			return nil
+		}
+		rows := make([][]string, 0, len(output.Blake3s))
+		for _, digest := range output.Blake3s {
+			rows = append(rows, []string{digest})
+		}
+		printPrettyTable([]string{"BLAKE3"}, rows)
+		return nil
+	default:
+		return fmt.Errorf("unsupported output mode %q", mode)
+	}
+}
+
+func renderHashmapShowOutput(mode string, output hashmapShowOutput) error {
+	switch mode {
+	case outputModeKV:
+		fmt.Printf("db=%s\n", output.DB)
+		fmt.Printf("blake3=%s\n", output.Blake3)
+		fmt.Printf("count=%d\n", output.Count)
+		fmt.Println("algo\tdigest")
+		for _, mapping := range output.Mappings {
+			fmt.Printf("%s\t%s\n", mapping.Algo, mapping.Digest)
+		}
+		return nil
+	case outputModeJSON:
+		return printJSON(output)
+	case outputModePretty:
+		printPrettyTitle("Hashmap Show")
+		printPrettyFields([]outputField{
+			{Label: "Database", Value: output.DB},
+			{Label: "BLAKE3", Value: output.Blake3},
+			{Label: "Mappings", Value: strconv.Itoa(output.Count)},
+		})
+		printPrettySection("Known Digests")
+		if len(output.Mappings) == 0 {
+			fmt.Println("No mappings found.")
+			return nil
+		}
+		rows := make([][]string, 0, len(output.Mappings))
+		for _, mapping := range output.Mappings {
+			rows = append(rows, []string{mapping.Algo, mapping.Digest})
+		}
+		printPrettyTable([]string{"Algorithm", "Digest"}, rows)
+		return nil
+	default:
+		return fmt.Errorf("unsupported output mode %q", mode)
+	}
 }
 
 func runHashmapIngestCommand(args []string) error {
@@ -41,10 +184,15 @@ func runHashmapIngestCommand(args []string) error {
 
 	dbPath := fs.String("db", defaultDB, "Path to snapshot database")
 	verbose := fs.Bool("v", false, "Verbose output")
+	outputMode := fs.String("output", outputModeAuto, "Output mode: auto|pretty|kv|json")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
+		return err
+	}
+	resolvedOutputMode, err := resolvePrettyKVJSONOutputMode(*outputMode)
+	if err != nil {
 		return err
 	}
 
@@ -104,16 +252,22 @@ func runHashmapIngestCommand(args []string) error {
 		return fmt.Errorf("commit hashmap ingest transaction: %w", err)
 	}
 
-	fmt.Printf("db=%s\n", absDBPath)
-	fmt.Printf("root=%s\n", absRootPath)
-	fmt.Printf("scanned=%d\n", stats.scanned)
-	fmt.Printf("mapped_files=%d\n", stats.mappedFiles)
-	fmt.Printf("mappings_upserted=%d\n", stats.mappingsUpserted)
-	fmt.Printf("skipped_uncached=%d\n", stats.skippedUncached)
-	fmt.Printf("skipped_stale=%d\n", stats.skippedStale)
-	fmt.Printf("skipped_no_blake3=%d\n", stats.skippedNoBlake3)
-	fmt.Printf("errors=%d\n", stats.errors)
-	return nil
+	return renderHashmapIngestOutput(
+		resolvedOutputMode,
+		hashmapIngestOutput{
+			DB:   absDBPath,
+			Root: absRootPath,
+			Stats: hashmapIngestStatsOutput{
+				Scanned:          stats.scanned,
+				MappedFiles:      stats.mappedFiles,
+				MappingsUpserted: stats.mappingsUpserted,
+				SkippedUncached:  stats.skippedUncached,
+				SkippedStale:     stats.skippedStale,
+				SkippedNoBlake3:  stats.skippedNoBlake3,
+				Errors:           stats.errors,
+			},
+		},
+	)
 }
 
 func ingestHashMappingsFromFile(tx *sql.Tx, path string, verbose bool, stats *hashmapIngestStats) error {
@@ -229,10 +383,15 @@ func runHashmapLookupCommand(args []string) error {
 	dbPath := fs.String("db", defaultDB, "Path to snapshot database")
 	algo := fs.String("algo", "", "Hash algorithm to search (required)")
 	digest := fs.String("digest", "", "Digest to search (required)")
+	outputMode := fs.String("output", outputModeAuto, "Output mode: auto|pretty|kv|json")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
+		return err
+	}
+	resolvedOutputMode, err := resolvePrettyKVJSONOutputMode(*outputMode)
+	if err != nil {
 		return err
 	}
 
@@ -259,15 +418,16 @@ func runHashmapLookupCommand(args []string) error {
 		return err
 	}
 
-	fmt.Printf("db=%s\n", absDBPath)
-	fmt.Printf("algo=%s\n", strings.TrimSpace(*algo))
-	fmt.Printf("digest=%s\n", strings.TrimSpace(*digest))
-	fmt.Printf("count=%d\n", len(blake3Digests))
-	fmt.Println("blake3")
-	for _, blake3Digest := range blake3Digests {
-		fmt.Println(blake3Digest)
-	}
-	return nil
+	return renderHashmapLookupOutput(
+		resolvedOutputMode,
+		hashmapLookupOutput{
+			DB:      absDBPath,
+			Algo:    strings.TrimSpace(*algo),
+			Digest:  strings.TrimSpace(*digest),
+			Count:   len(blake3Digests),
+			Blake3s: blake3Digests,
+		},
+	)
 }
 
 func lookupBlake3DigestsByAlgoDigest(db *sql.DB, algo, digest string) ([]string, error) {
@@ -313,10 +473,15 @@ func runHashmapShowCommand(args []string) error {
 
 	dbPath := fs.String("db", defaultDB, "Path to snapshot database")
 	blake3Digest := fs.String("blake3", "", "BLAKE3 digest to inspect (required)")
+	outputMode := fs.String("output", outputModeAuto, "Output mode: auto|pretty|kv|json")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
+		return err
+	}
+	resolvedOutputMode, err := resolvePrettyKVJSONOutputMode(*outputMode)
+	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(*blake3Digest) == "" {
@@ -339,14 +504,15 @@ func runHashmapShowCommand(args []string) error {
 		return err
 	}
 
-	fmt.Printf("db=%s\n", absDBPath)
-	fmt.Printf("blake3=%s\n", strings.TrimSpace(*blake3Digest))
-	fmt.Printf("count=%d\n", len(mappings))
-	fmt.Println("algo\tdigest")
-	for _, mapping := range mappings {
-		fmt.Printf("%s\t%s\n", mapping.Algo, mapping.Digest)
-	}
-	return nil
+	return renderHashmapShowOutput(
+		resolvedOutputMode,
+		hashmapShowOutput{
+			DB:       absDBPath,
+			Blake3:   strings.TrimSpace(*blake3Digest),
+			Count:    len(mappings),
+			Mappings: mappings,
+		},
+	)
 }
 
 func lookupMappingsByBlake3(db *sql.DB, blake3Digest string) ([]hashmapMapping, error) {

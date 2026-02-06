@@ -25,11 +25,14 @@ Forge uses `cobra` for command scaffolding.
 - Use `DisableFlagParsing: true` when reusing existing `flag.FlagSet` handlers.
 - Prefer explicit subcommands for non-trivial tools (`create`, `history`, `diff`, etc.).
 - Keep tool-specific persistence logic encapsulated per file.
+- For commands with structured output, add `-output auto|pretty|kv|json` and follow `docs/tool_rules.md`.
+- In `auto` mode, prefer `pretty` on terminals and a script-safe mode for non-interactive stdout.
 
 ## Checklist
 
 - [ ] Command help is clear.
 - [ ] Errors are actionable.
 - [ ] Output format follows `docs/tool_rules.md`.
+- [ ] Script-safe output (`kv`/`json` or equivalent) is documented and tested.
 - [ ] Tests cover happy path and key failure modes.
 - [ ] README and docs updated.
